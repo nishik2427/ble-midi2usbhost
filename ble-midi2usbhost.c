@@ -259,12 +259,18 @@ int main()
 
     stdio_init_all();
     
-    tusb_init();
+    //tusb_init();
     // initialize CYW43 driver architecture (will enable BT if/because CYW43_ENABLE_BLUETOOTH == 1)
     if (cyw43_arch_init()) {
         printf("ble-midi2usbhost: failed to initialize cyw43_arch\n");
         return -1;
     }
+    cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
+    sleep_ms(500);
+    cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 0);
+    sleep_ms(500);
+
+    tusb_init();
     l2cap_init();
 
     sm_init();

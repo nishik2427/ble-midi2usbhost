@@ -256,6 +256,9 @@ int main()
 {
     board_init();
     printf("Pico W BLE-MIDI to USB Host Adapter\r\n");
+
+    stdio_init_all();
+    
     tusb_init();
     // initialize CYW43 driver architecture (will enable BT if/because CYW43_ENABLE_BLUETOOTH == 1)
     if (cyw43_arch_init()) {
@@ -277,6 +280,8 @@ int main()
 
     // turn on bluetooth
     hci_power_control(HCI_POWER_ON);
+
+    cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
     for(;;) {
         tuh_task();
         bool usb_connected = midi_dev_addr != 0 && tuh_midi_configured(midi_dev_addr);

@@ -118,7 +118,8 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
                         return;
                     }
                     gap_local_bd_addr(local_addr);
-                    printf("BTstack up and running on %s.\n", bd_addr_to_str(local_addr));
+                    //printf("BTstack up and running on %s.\n", bd_addr_to_str(local_addr));
+                    printf("1\r\n");
 
                     // setup advertisements
                     uint16_t adv_int_min = 800;
@@ -135,7 +136,8 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
 
                     break;
                 case HCI_EVENT_DISCONNECTION_COMPLETE:
-                    printf("ble-midi2usbhost: HCI_EVENT_DISCONNECTION_COMPLETE event\r\n");
+                    //printf("ble-midi2usbhost: HCI_EVENT_DISCONNECTION_COMPLETE event\r\n");
+                    printf("2\r\n");
                     break;
                 case HCI_EVENT_GATTSERVICE_META:
                     switch(hci_event_gattservice_meta_get_subevent_code(packet)) {
@@ -143,7 +145,8 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
                             con_handle = gattservice_subevent_spp_service_connected_get_con_handle(packet);
                             break;
                         case GATTSERVICE_SUBEVENT_SPP_SERVICE_DISCONNECTED:
-                            printf("ble-midi2usbhost: GATTSERVICE_SUBEVENT_SPP_SERVICE_DISCONNECTED event\r\n");
+                            //printf("ble-midi2usbhost: GATTSERVICE_SUBEVENT_SPP_SERVICE_DISCONNECTED event\r\n");
+                            printf("3\r\n");
                             con_handle = HCI_CON_HANDLE_INVALID;
                             break;
                         default:
@@ -151,44 +154,55 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
                     }
                     break;
                 case SM_EVENT_JUST_WORKS_REQUEST:
-                    printf("ble-midi2usbhost: Just Works requested\n");
+                    //printf("ble-midi2usbhost: Just Works requested\n");
+                    printf("4\r\n");
                     sm_just_works_confirm(sm_event_just_works_request_get_handle(packet));
                     break;
                 case SM_EVENT_NUMERIC_COMPARISON_REQUEST:
-                    printf("ble-midi2usbhost: Confirming numeric comparison: %"PRIu32"\n", sm_event_numeric_comparison_request_get_passkey(packet));
+                    //printf("ble-midi2usbhost: Confirming numeric comparison: %"PRIu32"\n", sm_event_numeric_comparison_request_get_passkey(packet));
+                    printf("5\r\n");
                     sm_numeric_comparison_confirm(sm_event_passkey_display_number_get_handle(packet));
                     break;
                 case SM_EVENT_PASSKEY_DISPLAY_NUMBER:
-                    printf("ble-midi2usbhost: Display Passkey: %"PRIu32"\n", sm_event_passkey_display_number_get_passkey(packet));
+                    //printf("ble-midi2usbhost: Display Passkey: %"PRIu32"\n", sm_event_passkey_display_number_get_passkey(packet));
+                    printf("6\r\n");
                     break;
                 case SM_EVENT_IDENTITY_CREATED:
                     sm_event_identity_created_get_identity_address(packet, addr);
-                    printf("ble-midi2usbhost: Identity created: type %u address %s\n", sm_event_identity_created_get_identity_addr_type(packet), bd_addr_to_str(addr));
+                    //printf("ble-midi2usbhost: Identity created: type %u address %s\n", sm_event_identity_created_get_identity_addr_type(packet), bd_addr_to_str(addr));
+                    printf("7\r\n");
                     break;
                 case SM_EVENT_IDENTITY_RESOLVING_SUCCEEDED:
                     sm_event_identity_resolving_succeeded_get_identity_address(packet, addr);
-                    printf("ble-midi2usbhost: Identity resolved: type %u address %s\n", sm_event_identity_resolving_succeeded_get_identity_addr_type(packet), bd_addr_to_str(addr));
+                    //printf("ble-midi2usbhost: Identity resolved: type %u address %s\n", sm_event_identity_resolving_succeeded_get_identity_addr_type(packet), bd_addr_to_str(addr));
+                    printf("8\r\n");
                     break;
                 case SM_EVENT_IDENTITY_RESOLVING_FAILED:
                     sm_event_identity_created_get_address(packet, addr);
-                    printf("ble-midi2usbhost: Identity resolving failed\n");
+                    //printf("ble-midi2usbhost: Identity resolving failed\n");
+                    printf("9\r\n");
                     break;
                 case SM_EVENT_PAIRING_STARTED:
-                    printf("Pairing started\n");
+                    //printf("Pairing started\n");
+                    printf("A\r\n");
                     break;
                 case SM_EVENT_PAIRING_COMPLETE:
                     switch (sm_event_pairing_complete_get_status(packet)){
                         case ERROR_CODE_SUCCESS:
-                            printf("ble-midi2usbhost: Pairing complete, success\n");
+                            //printf("ble-midi2usbhost: Pairing complete, success\n");
+                            printf("B\r\n");
                             break;
                         case ERROR_CODE_CONNECTION_TIMEOUT:
-                            printf("ble-midi2usbhost: Pairing failed, timeout\n");
+                            //printf("ble-midi2usbhost: Pairing failed, timeout\n");
+                            printf("C\r\n");
                             break;
                         case ERROR_CODE_REMOTE_USER_TERMINATED_CONNECTION:
-                            printf("ble-midi2usbhost: Pairing failed, disconnected\n");
+                            //printf("ble-midi2usbhost: Pairing failed, disconnected\n");
+                            printf("D\r\n");
                             break;
                         case ERROR_CODE_AUTHENTICATION_FAILURE:
-                            printf("ble-midi2usbhost: Pairing failed, authentication failure with reason = %u\n", sm_event_pairing_complete_get_reason(packet));
+                            //printf("ble-midi2usbhost: Pairing failed, authentication failure with reason = %u\n", sm_event_pairing_complete_get_reason(packet));
+                            printf("E\r\n");
                             break;
                         default:
                             break;
@@ -196,24 +210,29 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
                     break;
                 case SM_EVENT_REENCRYPTION_STARTED:
                     sm_event_reencryption_complete_get_address(packet, addr);
-                    printf("ble-midi2usbhost: Bonding information exists for addr type %u, identity addr %s -> re-encryption started\n",
-                        sm_event_reencryption_started_get_addr_type(packet), bd_addr_to_str(addr));
+                    //printf("ble-midi2usbhost: Bonding information exists for addr type %u, identity addr %s -> re-encryption started\n",
+                    //    sm_event_reencryption_started_get_addr_type(packet), bd_addr_to_str(addr));
+                    printf("F\r\n");
                     break;
                 case SM_EVENT_REENCRYPTION_COMPLETE:
                     switch (sm_event_reencryption_complete_get_status(packet)){
                         case ERROR_CODE_SUCCESS:
-                            printf("ble-midi2usbhost: Re-encryption complete, success\n");
+                            //printf("ble-midi2usbhost: Re-encryption complete, success\n");
+                            printf("G\r\n");
                             break;
                         case ERROR_CODE_CONNECTION_TIMEOUT:
-                            printf("ble-midi2usbhost: Re-encryption failed, timeout\n");
+                            //printf("ble-midi2usbhost: Re-encryption failed, timeout\n");
+                            printf("H\r\n");
                             break;
                         case ERROR_CODE_REMOTE_USER_TERMINATED_CONNECTION:
-                            printf("ble-midi2usbhost: Re-encryption failed, disconnected\n");
+                            //printf("ble-midi2usbhost: Re-encryption failed, disconnected\n");
+                            printf("I\r\n");
                             break;
                         case ERROR_CODE_PIN_OR_KEY_MISSING:
-                            printf("ble-midi2usbhost: Re-encryption failed, bonding information missing\n\n");
-                            printf("Assuming remote lost bonding information\n");
-                            printf("Deleting local bonding information to allow for new pairing...\n");
+                            //printf("ble-midi2usbhost: Re-encryption failed, bonding information missing\n\n");
+                            //printf("Assuming remote lost bonding information\n");
+                            //printf("Deleting local bonding information to allow for new pairing...\n");
+                            printf("J\r\n");
                             sm_event_reencryption_complete_get_address(packet, addr);
                             addr_type = sm_event_reencryption_started_get_addr_type(packet);
                             gap_delete_bonding(addr_type, addr);
@@ -226,19 +245,24 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
                     status = gatt_event_query_complete_get_att_status(packet);
                     switch (status){
                         case ATT_ERROR_INSUFFICIENT_ENCRYPTION:
-                            printf("ble-midi2usbhost: GATT Query failed, Insufficient Encryption\n");
+                            //printf("ble-midi2usbhost: GATT Query failed, Insufficient Encryption\n");
+                            printf("K\r\n");
                             break;
                         case ATT_ERROR_INSUFFICIENT_AUTHENTICATION:
-                            printf("ble-midi2usbhost: GATT Query failed, Insufficient Authentication\n");
+                            //printf("ble-midi2usbhost: GATT Query failed, Insufficient Authentication\n");
+                            printf("L\r\n");
                             break;
                         case ATT_ERROR_BONDING_INFORMATION_MISSING:
-                            printf("ble-midi2usbhost: GATT Query failed, Bonding Information Missing\n");
+                            //printf("ble-midi2usbhost: GATT Query failed, Bonding Information Missing\n");
+                            printf("M\r\n");
                             break;
                         case ATT_ERROR_SUCCESS:
-                            printf("ble-midi2usbhost: GATT Query successful\n");
+                            //printf("ble-midi2usbhost: GATT Query successful\n");
+                            printf("N\r\n");
                             break;
                         default:
-                            printf("ble-midi2usbhost: GATT Query failed, status 0x%02x\n", gatt_event_query_complete_get_att_status(packet));
+                            //printf("ble-midi2usbhost: GATT Query failed, status 0x%02x\n", gatt_event_query_complete_get_att_status(packet));
+                            printf("O\r\n");
                             break;
                     }
                     break;

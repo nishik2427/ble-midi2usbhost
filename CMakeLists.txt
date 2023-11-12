@@ -53,6 +53,7 @@ target_link_libraries(${target_name}
     tinyusb_host
     tinyusb_board
     usb_midi_host_app_driver
+    pico_multicore
     )
 target_include_directories(${target_name} PRIVATE
     ${CMAKE_CURRENT_LIST_DIR} # For btstack config, etc.

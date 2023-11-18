@@ -81,7 +81,6 @@
 #include "bsp/board_api.h"
 #include "tusb.h"
 #include "usb_midi_host.h"
-#include "pico/multicore.h"
 // This is Bluetooth LE only
 #define APP_AD_FLAGS 0x06
 const uint8_t adv_data[] = {
@@ -278,35 +277,6 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
 
 static btstack_packet_callback_registration_t sm_event_callback_registration;
 
-void core1_entry() {
-    while(1){
-        tuh_task();
-        bool usb_connected = midi_dev_addr != 0 && tuh_midi_configured(midi_dev_addr);
-        // poll the BLE-MIDI service and send MIDI data to USB
-        if (con_handle != HCI_CON_HANDLE_INVALID && usb_connected && tuh_midih_get_num_tx_cables(midi_dev_addr) >= 1) {
-            uint16_t timestamp;
-            uint8_t mes[3];
-            uint8_t nread = midi_service_stream_read(con_handle, sizeof(mes), mes, &timestamp);
-            if (nread != 0) {
-                // Ignore timestamps for now. Handling timestamps has a few issues:
-                // 1. Some applications (e.g., TouchDAW 2.3.1 for Android or Midi Wrench on an iPad)
-                //    always send timestamp value of 0.
-                // 2. Synchronizing the timestamps to the system clock has issues if there are
-                //    lost or out of order packets.
-                uint32_t nwritten = tuh_midi_stream_write(midi_dev_addr, 0, mes, nread);
-                if (nwritten != nread) {
-                    TU_LOG1("Warning: Dropped %lu bytes receiving from Bluetooth MIDI In\r\n", nread - nwritten);
-                }
-            if (usb_connected)
-                tuh_midi_stream_flush(midi_dev_addr);
-            }
-        }
-    }
-
-}
-
-
-
 int main()
 {
     board_init();
@@ -343,10 +313,6 @@ int main()
     hci_power_control(HCI_POWER_ON);
 
     cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
-
-    //multicore_launch_core1(core1_entry);
-    //while(1) {}
-
     
     for(;;) {
         tuh_task();

@@ -358,8 +358,7 @@ int main()
             uint8_t nread = midi_service_stream_read(con_handle, sizeof(mes), mes, &timestamp);
             if (nread != 0) {
                 // Ignore timestamps for now. Handling timestamps has a few issues:
-                // 1. Some applications
-                 (e.g., TouchDAW 2.3.1 for Android or Midi Wrench on an iPad)
+                // 1. Some applications (e.g., TouchDAW 2.3.1 for Android or Midi Wrench on an iPad)
                 //    always send timestamp value of 0.
                 // 2. Synchronizing the timestamps to the system clock has issues if there are
                 //    lost or out of order packets.

@@ -82,6 +82,14 @@
 #include "tusb.h"
 #include "usb_midi_host.h"
 #include "pico/multicore.h"
+#include "hardware/clocks.h"
+#include "hardware/vreg.h"
+
+// システムクロック周波数指定 
+//#define CLK_SYS	((uint32_t)208800000)
+#define CLK_SYS	((uint32_t)250000000)
+
+
 // This is Bluetooth LE only
 #define APP_AD_FLAGS 0x06
 const uint8_t adv_data[] = {
@@ -102,7 +110,7 @@ static hci_con_handle_t con_handle = HCI_CON_HANDLE_INVALID;
 
 static uint8_t midi_dev_addr = 0;
 
-static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size) {
+static void __time_critical_func(packet_handler)(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size) {
     UNUSED(size);
     UNUSED(channel);
     bd_addr_t local_addr;
@@ -278,8 +286,18 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
 
 static btstack_packet_callback_registration_t sm_event_callback_registration;
 
-void core1_entry() {
+void __time_critical_func(core1_entry)() {
+    tusb_init();
+
+    //midi_service_stream_init(packet_handler);
+
+    // turn on bluetooth
+    //hci_power_control(HCI_POWER_ON);
+
+    cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
+
     while(1){
+        //sleep_ms(1);
         tuh_task();
         bool usb_connected = midi_dev_addr != 0 && tuh_midi_configured(midi_dev_addr);
         // poll the BLE-MIDI service and send MIDI data to USB
@@ -295,7 +313,8 @@ void core1_entry() {
                 //    lost or out of order packets.
                 uint32_t nwritten = tuh_midi_stream_write(midi_dev_addr, 0, mes, nread);
                 if (nwritten != nread) {
-                    TU_LOG1("Warning: Dropped %lu bytes receiving from Bluetooth MIDI In\r\n", nread - nwritten);
+                    //TU_LOG1("Warning: Dropped %lu bytes receiving from Bluetooth MIDI In\r\n", nread - nwritten);
+                    TU_LOG1("BTDropped %lu \r\n", nread - nwritten);
                 }
             if (usb_connected)
                 tuh_midi_stream_flush(midi_dev_addr);
@@ -303,8 +322,78 @@ void core1_entry() {
         }
     }
 
+    /*
+    //--------------------------------------------------------------------+
+    // TinyUSB Callbacks
+    //--------------------------------------------------------------------+
+
+    // Invoked when device with USB MIDI interface is mounted
+    void tuh_midi_mount_cb(uint8_t dev_addr, uint8_t in_ep, uint8_t out_ep, uint8_t num_cables_rx, uint16_t num_cables_tx)
+    {
+    printf("ble-midi2usbhost: MIDI device address = %u, IN endpoint %u has %u cables, OUT endpoint %u has %u cables\r\n",
+        dev_addr, in_ep & 0xf, num_cables_rx, out_ep & 0xf, num_cables_tx);
+
+    if (midi_dev_addr == 0) {
+        // then no MIDI device is currently connected
+        midi_dev_addr = dev_addr;
+    }
+    else {
+        printf("ble-midi2usbhost: A different USB MIDI Device is already connected.\r\nOnly one device at a time is supported in this program\r\nDevice is disabled\r\n");
+    }
+    }
+
+    // Invoked when device with hid interface is un-mounted
+    void tuh_midi_umount_cb(uint8_t dev_addr, uint8_t instance)
+    {  
+        if (dev_addr == midi_dev_addr) {
+            midi_dev_addr = 0;
+            printf("ble-midi2usbhost: MIDI device address = %d, instance = %d is unmounted\r\n", dev_addr, instance);
+        }
+        else {
+            printf("ble-midi2usbhost: Unused MIDI device address = %d, instance = %d is unmounted\r\n", dev_addr, instance);
+        }
+    }
+
+    void tuh_midi_rx_cb(uint8_t dev_addr, uint32_t num_packets)
+    {
+        if (midi_dev_addr == dev_addr)
+        {
+            if (num_packets != 0)
+            {
+                uint8_t cable_num;
+                uint8_t buffer[48];
+                while (1) {
+                    int32_t bytes_read = tuh_midi_stream_read(dev_addr, &cable_num, buffer, sizeof(buffer));
+                    if (bytes_read == 0)
+                        return; // done
+                    if (cable_num == 0) {
+                        if (con_handle == HCI_CON_HANDLE_INVALID) {
+                            TU_LOG1("ble-midi2usbhost: No BLE-MIDI connection: Dropped %lu bytes sending to BLE-MIDI\r\n", bytes_read);
+                            return;
+                        }
+                        uint8_t npushed = midi_service_stream_write(con_handle, bytes_read, buffer);
+                        if (npushed != bytes_read) {
+                            TU_LOG1("ble-midi2usbhost: Warning: Dropped %lu bytes sending to BLE-MIDI\r\n", bytes_read - npushed);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    void tuh_midi_tx_cb(uint8_t dev_addr)
+    {
+        (void)dev_addr;
+    }
+    */
+
 }
 
+void __time_critical_func(core0_loop)() {
+    while(1) {
+        //sleep_ms(1);
+    }
+}
 
 
 int main()
@@ -312,7 +401,21 @@ int main()
     board_init();
     printf("Pico W BLE-MIDI to USB Host Adapter\r\n");
 
+    // Core電圧Up 1.1V->1.3V
+    vreg_set_voltage(VREG_VOLTAGE_1_30);
+	// 最適なCPU周波数の設定(オーバクロック CLK_SYS=208800000[Hz])
+    set_sys_clock_khz(CLK_SYS/1000, true);
+
+    multicore_reset_core1();
+
     stdio_init_all();
+
+    // UARTデバッグ高速化
+    // printf出力が多いとDAC再生が途切れる場合があるため
+    //uart_init(uart0, 3000000);
+	printf(">>>\nCLK_SYS=%ldHz\r\n", clock_get_hz(clk_sys));
+
+    //stdio_init_all();
     sleep_ms(1000); 
     //cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
     //sleep_ms(500);
@@ -320,7 +423,7 @@ int main()
     //sleep_ms(500);
 
     
-    tusb_init();
+    //tusb_init();
     // initialize CYW43 driver architecture (will enable BT if/because CYW43_ENABLE_BLUETOOTH == 1)
     if (cyw43_arch_init()) {
         printf("ble-midi2usbhost: failed to initialize cyw43_arch\n");
@@ -342,12 +445,17 @@ int main()
     // turn on bluetooth
     hci_power_control(HCI_POWER_ON);
 
-    cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
+    //cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
 
     multicore_launch_core1(core1_entry);
-    while(1) {}
+    /*
+    while(1) {
+        //sleep_ms(1);
+    }
+    */
+    core0_loop();
 
-    
+    /*
     for(;;) {
         tuh_task();
         bool usb_connected = midi_dev_addr != 0 && tuh_midi_configured(midi_dev_addr);
@@ -371,9 +479,10 @@ int main()
             }
         }
     }
-
+    */
     return 0; // never gets here
 }
+
 
 //--------------------------------------------------------------------+
 // TinyUSB Callbacks
@@ -406,7 +515,7 @@ void tuh_midi_umount_cb(uint8_t dev_addr, uint8_t instance)
   }
 }
 
-void tuh_midi_rx_cb(uint8_t dev_addr, uint32_t num_packets)
+void __time_critical_func(tuh_midi_rx_cb)(uint8_t dev_addr, uint32_t num_packets)
 {
     if (midi_dev_addr == dev_addr)
     {
@@ -420,12 +529,14 @@ void tuh_midi_rx_cb(uint8_t dev_addr, uint32_t num_packets)
                     return; // done
                 if (cable_num == 0) {
                     if (con_handle == HCI_CON_HANDLE_INVALID) {
-                        TU_LOG1("ble-midi2usbhost: No BLE-MIDI connection: Dropped %lu bytes sending to BLE-MIDI\r\n", bytes_read);
+                        //TU_LOG1("ble-midi2usbhost: No BLE-MIDI connection: Dropped %lu bytes sending to BLE-MIDI\r\n", bytes_read);
+                        TU_LOG1("Dropped %lu\r\n", bytes_read);
                         return;
                     }
                     uint8_t npushed = midi_service_stream_write(con_handle, bytes_read, buffer);
                     if (npushed != bytes_read) {
-                        TU_LOG1("ble-midi2usbhost: Warning: Dropped %lu bytes sending to BLE-MIDI\r\n", bytes_read - npushed);
+                        //TU_LOG1("ble-midi2usbhost: Warning: Dropped %lu bytes sending to BLE-MIDI\r\n", bytes_read - npushed);
+                        TU_LOG1("Warning Dropped %lu\r\n", bytes_read - npushed);
                     }
                 }
             }
@@ -433,7 +544,9 @@ void tuh_midi_rx_cb(uint8_t dev_addr, uint32_t num_packets)
     }
 }
 
-void tuh_midi_tx_cb(uint8_t dev_addr)
+void __time_critical_func(tuh_midi_tx_cb)(uint8_t dev_addr)
 {
     (void)dev_addr;
 }
+
+

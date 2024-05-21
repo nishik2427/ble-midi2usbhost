@@ -1,81 +1,9 @@
 /**
- * MIT License
- *
- * Copyright (c) 2023 rppicomidi
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- *
- */
-
-/**
- * To the extent this code is solely for use on the Rapsberry Pi Pico W or
- * Pico WH, the license file ${PICO_SDK_PATH}/src/rp2_common/pico_btstack/LICENSE.RP may
- * apply.
- * 
- */
-
-/**
- * This file uses code from various BlueKitchen example files, which contain
- * the following copyright notice, included per the notice below.
- *
- * Copyright (C) 2018 BlueKitchen GmbH
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- * 3. Neither the name of the copyright holders nor the names of
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- * 4. Any redistribution, use, or modification is done solely for
- *    personal benefit and not for any commercial purpose or for
- *    monetary gain.
- *
- * THIS SOFTWARE IS PROVIDED BY BLUEKITCHEN GMBH AND CONTRIBUTORS
- * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
- * FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL BLUEKITCHEN
- * GMBH OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
- * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
- * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS
- * OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
- * AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
- * THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
- * SUCH DAMAGE.
- *
- * Please inquire about commercial licensing options at 
- * contact@bluekitchen-gmbh.com
- *
- */
+*/
 #include <inttypes.h>
 #include <stdio.h>
 #include "midi_service_stream_handler.h"
-#include "btstack.h"
 #include "pico/stdlib.h"
-#include "pico/cyw43_arch.h"
-#include "pico/btstack_cyw43.h"
 #include "ble-midi2usbhost.h"
 #define _TUSB_HID_H_ // prevent tinyusb HID namespace conflicts with btstack
 #include "bsp/board_api.h"
@@ -84,403 +12,519 @@
 #include "pico/multicore.h"
 #include "hardware/clocks.h"
 #include "hardware/vreg.h"
+#include "hardware/uart.h"
+
+#include "M5UnitSynth.h"
+
+#include "lib/LCD/LCD_1in3.h"
+#include "lib/Config/DEV_Config.h"
+#include "lib/GUI/GUI_Paint.h"
+//#include "ImageData.h"
+#include "lib/Config/Debug.h"
+//#include <stdlib.h> // malloc() free()
+#include "lib/Infrared/Infrared.h"
 
 // システムクロック周波数指定 
-//#define CLK_SYS	((uint32_t)208800000)
-#define CLK_SYS	((uint32_t)250000000)
+#define CLK_SYS	((uint32_t)208800000)
+//#define CLK_SYS	((uint32_t)250000000)
 
+//UART1 define
+#define UART_ID uart1
+#define BAUD_RATE 31250
+#define DATA_BITS 8
+#define STOP_BITS 1
+#define PARITY    UART_PARITY_NONE
+#define UART_TX_PIN 4
+#define UART_RX_PIN 5
 
-// This is Bluetooth LE only
-#define APP_AD_FLAGS 0x06
-const uint8_t adv_data[] = {
-    // Flags general discoverable
-    0x02, BLUETOOTH_DATA_TYPE_FLAGS, APP_AD_FLAGS,
-    // Service class list
-    0x11, BLUETOOTH_DATA_TYPE_COMPLETE_LIST_OF_128_BIT_SERVICE_CLASS_UUIDS, 0x00, 0xc7, 0xc4, 0x4e, 0xe3, 0x6c, 0x51, 0xa7, 0x33, 0x4b, 0xe8, 0xed, 0x5a, 0x0e, 0xb8, 0x03,
-};
-const uint8_t adv_data_len = sizeof(adv_data);
-
-const uint8_t scan_resp_data[] = {
-    // Name
-    0x0E, BLUETOOTH_DATA_TYPE_COMPLETE_LOCAL_NAME, 'B', 'L', 'E', '-', 'M', 'I', 'D', 'I', '2', 'U', 'S', 'B', 'H',
-};
-const uint8_t scan_resp_data_len = sizeof(scan_resp_data);
-
-static hci_con_handle_t con_handle = HCI_CON_HANDLE_INVALID;
+#define ON_Brightness 100
+#define OFF_Brightness 1
+#define X_MAX 239
+#define Y_MAX 239
 
 static uint8_t midi_dev_addr = 0;
 
-static void __time_critical_func(packet_handler)(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size) {
-    UNUSED(size);
-    UNUSED(channel);
-    bd_addr_t local_addr;
-    uint8_t event_type;
-    bd_addr_t addr;
-    bd_addr_type_t addr_type;
-    uint8_t status;
-    switch(packet_type) {
-        case HCI_EVENT_PACKET:
-            event_type = hci_event_packet_get_type(packet);
-            switch(event_type){
-                case BTSTACK_EVENT_STATE:
-                    if (btstack_event_state_get_state(packet) != HCI_STATE_WORKING) {
-                        return;
-                    }
-                    gap_local_bd_addr(local_addr);
-                    //printf("BTstack up and running on %s.\n", bd_addr_to_str(local_addr));
-                    printf("1\r\n");
+int Control_mode = 0;   //mode_num = 1
+int Parameter_mode = 0; //mode_num = 2
+int mode_num = 0;
 
-                    // setup advertisements
-                    uint16_t adv_int_min = 800;
-                    uint16_t adv_int_max = 800;
-                    uint8_t adv_type = 0;
-                    bd_addr_t null_addr;
-                    memset(null_addr, 0, 6);
-                    gap_advertisements_set_params(adv_int_min, adv_int_max, adv_type, 0, null_addr, 0x07, 0x00);
-                    assert(adv_data_len <= 31); // ble limitation
-                    gap_advertisements_set_data(adv_data_len, (uint8_t*) adv_data);
-                    assert(scan_resp_data_len <= 31); // ble limitation
-                    gap_scan_response_set_data(scan_resp_data_len, (uint8_t*) scan_resp_data);
-                    gap_advertisements_enable(1);
+int Monitor_mode = 0; 
+int Ble_mode = 0;
+int EWI = 0;
 
-                    break;
-                case HCI_EVENT_DISCONNECTION_COMPLETE:
-                    //printf("ble-midi2usbhost: HCI_EVENT_DISCONNECTION_COMPLETE event\r\n");
-                    printf("2\r\n");
-                    break;
-                case HCI_EVENT_GATTSERVICE_META:
-                    switch(hci_event_gattservice_meta_get_subevent_code(packet)) {
-                        case GATTSERVICE_SUBEVENT_SPP_SERVICE_CONNECTED:
-                            con_handle = gattservice_subevent_spp_service_connected_get_con_handle(packet);
-                            break;
-                        case GATTSERVICE_SUBEVENT_SPP_SERVICE_DISCONNECTED:
-                            //printf("ble-midi2usbhost: GATTSERVICE_SUBEVENT_SPP_SERVICE_DISCONNECTED event\r\n");
-                            printf("3\r\n");
-                            con_handle = HCI_CON_HANDLE_INVALID;
-                            break;
-                        default:
-                            break;
-                    }
-                    break;
-                case SM_EVENT_JUST_WORKS_REQUEST:
-                    //printf("ble-midi2usbhost: Just Works requested\n");
-                    printf("4\r\n");
-                    sm_just_works_confirm(sm_event_just_works_request_get_handle(packet));
-                    break;
-                case SM_EVENT_NUMERIC_COMPARISON_REQUEST:
-                    //printf("ble-midi2usbhost: Confirming numeric comparison: %"PRIu32"\n", sm_event_numeric_comparison_request_get_passkey(packet));
-                    printf("5\r\n");
-                    sm_numeric_comparison_confirm(sm_event_passkey_display_number_get_handle(packet));
-                    break;
-                case SM_EVENT_PASSKEY_DISPLAY_NUMBER:
-                    //printf("ble-midi2usbhost: Display Passkey: %"PRIu32"\n", sm_event_passkey_display_number_get_passkey(packet));
-                    printf("6\r\n");
-                    break;
-                case SM_EVENT_IDENTITY_CREATED:
-                    sm_event_identity_created_get_identity_address(packet, addr);
-                    //printf("ble-midi2usbhost: Identity created: type %u address %s\n", sm_event_identity_created_get_identity_addr_type(packet), bd_addr_to_str(addr));
-                    printf("7\r\n");
-                    break;
-                case SM_EVENT_IDENTITY_RESOLVING_SUCCEEDED:
-                    sm_event_identity_resolving_succeeded_get_identity_address(packet, addr);
-                    //printf("ble-midi2usbhost: Identity resolved: type %u address %s\n", sm_event_identity_resolving_succeeded_get_identity_addr_type(packet), bd_addr_to_str(addr));
-                    printf("8\r\n");
-                    break;
-                case SM_EVENT_IDENTITY_RESOLVING_FAILED:
-                    sm_event_identity_created_get_address(packet, addr);
-                    //printf("ble-midi2usbhost: Identity resolving failed\n");
-                    printf("9\r\n");
-                    break;
-                case SM_EVENT_PAIRING_STARTED:
-                    //printf("Pairing started\n");
-                    printf("A\r\n");
-                    break;
-                case SM_EVENT_PAIRING_COMPLETE:
-                    switch (sm_event_pairing_complete_get_status(packet)){
-                        case ERROR_CODE_SUCCESS:
-                            //printf("ble-midi2usbhost: Pairing complete, success\n");
-                            printf("B\r\n");
-                            break;
-                        case ERROR_CODE_CONNECTION_TIMEOUT:
-                            //printf("ble-midi2usbhost: Pairing failed, timeout\n");
-                            printf("C\r\n");
-                            break;
-                        case ERROR_CODE_REMOTE_USER_TERMINATED_CONNECTION:
-                            //printf("ble-midi2usbhost: Pairing failed, disconnected\n");
-                            printf("D\r\n");
-                            break;
-                        case ERROR_CODE_AUTHENTICATION_FAILURE:
-                            //printf("ble-midi2usbhost: Pairing failed, authentication failure with reason = %u\n", sm_event_pairing_complete_get_reason(packet));
-                            printf("E\r\n");
-                            break;
-                        default:
-                            break;
-                    }
-                    break;
-                case SM_EVENT_REENCRYPTION_STARTED:
-                    sm_event_reencryption_complete_get_address(packet, addr);
-                    //printf("ble-midi2usbhost: Bonding information exists for addr type %u, identity addr %s -> re-encryption started\n",
-                    //    sm_event_reencryption_started_get_addr_type(packet), bd_addr_to_str(addr));
-                    printf("F\r\n");
-                    break;
-                case SM_EVENT_REENCRYPTION_COMPLETE:
-                    switch (sm_event_reencryption_complete_get_status(packet)){
-                        case ERROR_CODE_SUCCESS:
-                            //printf("ble-midi2usbhost: Re-encryption complete, success\n");
-                            printf("G\r\n");
-                            break;
-                        case ERROR_CODE_CONNECTION_TIMEOUT:
-                            //printf("ble-midi2usbhost: Re-encryption failed, timeout\n");
-                            printf("H\r\n");
-                            break;
-                        case ERROR_CODE_REMOTE_USER_TERMINATED_CONNECTION:
-                            //printf("ble-midi2usbhost: Re-encryption failed, disconnected\n");
-                            printf("I\r\n");
-                            break;
-                        case ERROR_CODE_PIN_OR_KEY_MISSING:
-                            //printf("ble-midi2usbhost: Re-encryption failed, bonding information missing\n\n");
-                            //printf("Assuming remote lost bonding information\n");
-                            //printf("Deleting local bonding information to allow for new pairing...\n");
-                            printf("J\r\n");
-                            sm_event_reencryption_complete_get_address(packet, addr);
-                            addr_type = sm_event_reencryption_started_get_addr_type(packet);
-                            gap_delete_bonding(addr_type, addr);
-                            break;
-                        default:
-                            break;
-                    }
-                    break;
-                case GATT_EVENT_QUERY_COMPLETE:
-                    status = gatt_event_query_complete_get_att_status(packet);
-                    switch (status){
-                        case ATT_ERROR_INSUFFICIENT_ENCRYPTION:
-                            //printf("ble-midi2usbhost: GATT Query failed, Insufficient Encryption\n");
-                            printf("K\r\n");
-                            break;
-                        case ATT_ERROR_INSUFFICIENT_AUTHENTICATION:
-                            //printf("ble-midi2usbhost: GATT Query failed, Insufficient Authentication\n");
-                            printf("L\r\n");
-                            break;
-                        case ATT_ERROR_BONDING_INFORMATION_MISSING:
-                            //printf("ble-midi2usbhost: GATT Query failed, Bonding Information Missing\n");
-                            printf("M\r\n");
-                            break;
-                        case ATT_ERROR_SUCCESS:
-                            //printf("ble-midi2usbhost: GATT Query successful\n");
-                            printf("N\r\n");
-                            break;
-                        default:
-                            //printf("ble-midi2usbhost: GATT Query failed, status 0x%02x\n", gatt_event_query_complete_get_att_status(packet));
-                            printf("O\r\n");
-                            break;
-                    }
-                    break;
-                default:
-                    break;
-            } // event_type
-            break;
-        default:
-            break;
-    } // HCI_PACKET
+int ch;
+int inst_list_num = 50;
+int cont_list_num = 0;
+uint Set_level = 125;
+
+bool __time_critical_func(reserved_addr)(uint8_t addr) {
+    return (addr & 0x78) == 0 || (addr & 0x78) == 0x78;
 }
 
-static btstack_packet_callback_registration_t sm_event_callback_registration;
-
-void __time_critical_func(core1_entry)() {
-    tusb_init();
-
-    //midi_service_stream_init(packet_handler);
-
-    // turn on bluetooth
-    //hci_power_control(HCI_POWER_ON);
-
-    cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
-
-    while(1){
-        //sleep_ms(1);
-        tuh_task();
-        bool usb_connected = midi_dev_addr != 0 && tuh_midi_configured(midi_dev_addr);
-        // poll the BLE-MIDI service and send MIDI data to USB
-        if (con_handle != HCI_CON_HANDLE_INVALID && usb_connected && tuh_midih_get_num_tx_cables(midi_dev_addr) >= 1) {
-            uint16_t timestamp;
-            uint8_t mes[3];
-            uint8_t nread = midi_service_stream_read(con_handle, sizeof(mes), mes, &timestamp);
-            if (nread != 0) {
-                // Ignore timestamps for now. Handling timestamps has a few issues:
-                // 1. Some applications (e.g., TouchDAW 2.3.1 for Android or Midi Wrench on an iPad)
-                //    always send timestamp value of 0.
-                // 2. Synchronizing the timestamps to the system clock has issues if there are
-                //    lost or out of order packets.
-                uint32_t nwritten = tuh_midi_stream_write(midi_dev_addr, 0, mes, nread);
-                if (nwritten != nread) {
-                    //TU_LOG1("Warning: Dropped %lu bytes receiving from Bluetooth MIDI In\r\n", nread - nwritten);
-                    TU_LOG1("BTDropped %lu \r\n", nread - nwritten);
-                }
-            if (usb_connected)
-                tuh_midi_stream_flush(midi_dev_addr);
-            }
-        }
-    }
-
-    /*
-    //--------------------------------------------------------------------+
-    // TinyUSB Callbacks
-    //--------------------------------------------------------------------+
-
-    // Invoked when device with USB MIDI interface is mounted
-    void tuh_midi_mount_cb(uint8_t dev_addr, uint8_t in_ep, uint8_t out_ep, uint8_t num_cables_rx, uint16_t num_cables_tx)
-    {
-    printf("ble-midi2usbhost: MIDI device address = %u, IN endpoint %u has %u cables, OUT endpoint %u has %u cables\r\n",
-        dev_addr, in_ep & 0xf, num_cables_rx, out_ep & 0xf, num_cables_tx);
-
-    if (midi_dev_addr == 0) {
-        // then no MIDI device is currently connected
-        midi_dev_addr = dev_addr;
-    }
-    else {
-        printf("ble-midi2usbhost: A different USB MIDI Device is already connected.\r\nOnly one device at a time is supported in this program\r\nDevice is disabled\r\n");
-    }
-    }
-
-    // Invoked when device with hid interface is un-mounted
-    void tuh_midi_umount_cb(uint8_t dev_addr, uint8_t instance)
-    {  
-        if (dev_addr == midi_dev_addr) {
-            midi_dev_addr = 0;
-            printf("ble-midi2usbhost: MIDI device address = %d, instance = %d is unmounted\r\n", dev_addr, instance);
-        }
-        else {
-            printf("ble-midi2usbhost: Unused MIDI device address = %d, instance = %d is unmounted\r\n", dev_addr, instance);
-        }
-    }
-
-    void tuh_midi_rx_cb(uint8_t dev_addr, uint32_t num_packets)
-    {
-        if (midi_dev_addr == dev_addr)
-        {
-            if (num_packets != 0)
-            {
-                uint8_t cable_num;
-                uint8_t buffer[48];
-                while (1) {
-                    int32_t bytes_read = tuh_midi_stream_read(dev_addr, &cable_num, buffer, sizeof(buffer));
-                    if (bytes_read == 0)
-                        return; // done
-                    if (cable_num == 0) {
-                        if (con_handle == HCI_CON_HANDLE_INVALID) {
-                            TU_LOG1("ble-midi2usbhost: No BLE-MIDI connection: Dropped %lu bytes sending to BLE-MIDI\r\n", bytes_read);
-                            return;
-                        }
-                        uint8_t npushed = midi_service_stream_write(con_handle, bytes_read, buffer);
-                        if (npushed != bytes_read) {
-                            TU_LOG1("ble-midi2usbhost: Warning: Dropped %lu bytes sending to BLE-MIDI\r\n", bytes_read - npushed);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    void tuh_midi_tx_cb(uint8_t dev_addr)
-    {
-        (void)dev_addr;
-    }
-    */
-
-}
-
-void __time_critical_func(core0_loop)() {
-    while(1) {
-        //sleep_ms(1);
-    }
-}
-
-
-int main()
+UBYTE Digital_Read(UWORD Pin)
 {
-    board_init();
-    printf("Pico W BLE-MIDI to USB Host Adapter\r\n");
-
-    // Core電圧Up 1.1V->1.3V
-    vreg_set_voltage(VREG_VOLTAGE_1_30);
-	// 最適なCPU周波数の設定(オーバクロック CLK_SYS=208800000[Hz])
-    set_sys_clock_khz(CLK_SYS/1000, true);
-
-    multicore_reset_core1();
-
-    stdio_init_all();
-
-    // UARTデバッグ高速化
-    // printf出力が多いとDAC再生が途切れる場合があるため
-    //uart_init(uart0, 3000000);
-	printf(">>>\nCLK_SYS=%ldHz\r\n", clock_get_hz(clk_sys));
-
-    //stdio_init_all();
-    sleep_ms(1000); 
-    //cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
-    //sleep_ms(500);
-    //cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 0);
-    //sleep_ms(500);
-
-    
-    //tusb_init();
-    // initialize CYW43 driver architecture (will enable BT if/because CYW43_ENABLE_BLUETOOTH == 1)
-    if (cyw43_arch_init()) {
-        printf("ble-midi2usbhost: failed to initialize cyw43_arch\n");
-        return -1;
+    int value_1 = 1 ;
+    value_1 = gpio_get(Pin);
+    if ( mode_num != 0 ){
+        sleep_ms(100);
     }
-    l2cap_init();
-
-    sm_init();
-
-    att_server_init(profile_data, NULL, NULL);
-    // just works, legacy pairing, with bonding
-    sm_set_io_capabilities(IO_CAPABILITY_NO_INPUT_NO_OUTPUT);
-    sm_set_authentication_requirements(SM_AUTHREQ_SECURE_CONNECTION | SM_AUTHREQ_BONDING);
-    // register for SM events
-    sm_event_callback_registration.callback = &packet_handler;
-    sm_add_event_handler(&sm_event_callback_registration);
-    midi_service_stream_init(packet_handler);
-
-    // turn on bluetooth
-    hci_power_control(HCI_POWER_ON);
-
-    //cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
-
-    multicore_launch_core1(core1_entry);
-    /*
-    while(1) {
-        //sleep_ms(1);
+    if (value_1 == gpio_get(Pin)) {
+        return value_1;
+    } else {
+        return 1;
     }
-    */
-    core0_loop();
+}
 
-    /*
-    for(;;) {
-        tuh_task();
-        bool usb_connected = midi_dev_addr != 0 && tuh_midi_configured(midi_dev_addr);
-        // poll the BLE-MIDI service and send MIDI data to USB
-        if (con_handle != HCI_CON_HANDLE_INVALID && usb_connected && tuh_midih_get_num_tx_cables(midi_dev_addr) >= 1) {
-            uint16_t timestamp;
-            uint8_t mes[3];
-            uint8_t nread = midi_service_stream_read(con_handle, sizeof(mes), mes, &timestamp);
-            if (nread != 0) {
-                // Ignore timestamps for now. Handling timestamps has a few issues:
-                // 1. Some applications (e.g., TouchDAW 2.3.1 for Android or Midi Wrench on an iPad)
-                //    always send timestamp value of 0.
-                // 2. Synchronizing the timestamps to the system clock has issues if there are
-                //    lost or out of order packets.
-                uint32_t nwritten = tuh_midi_stream_write(midi_dev_addr, 0, mes, nread);
-                if (nwritten != nread) {
-                    TU_LOG1("Warning: Dropped %lu bytes receiving from Bluetooth MIDI In\r\n", nread - nwritten);
-                }
-            if (usb_connected)
-                tuh_midi_stream_flush(midi_dev_addr);
-            }
+void print_midi_event(const uint8_t msg[3]) {
+    int ch;
+    int event;
+    int cont_num;
+
+    ch = msg[0] & 0xf;
+    event = (msg[0] >> 4) & 0xf;
+    if (event != 0xf) {
+	    printf("Ch: %02d | ", ch);
+    } else {
+	    printf("System | ");
+    }
+
+    switch (event) {
+    case 8:
+	    printf("Note Off  : key=%d velocity=%d", msg[1], msg[2]);
+	    break;
+    case 9:
+	    printf("Note On   : key=%d velocity=%d", msg[1], msg[2]);
+	    break;
+    case 10:
+	    printf("PolyPress : key=%d velocity=%d", msg[1], msg[2]);
+	    break;
+    case 11:
+        cont_num = msg[1] & 0xf;
+        if (cont_num == 0x2) {
+	        printf("Breath Cont : velocity=%d", msg[2]);
+        } else {
+	        printf("Control   : num=%d value=%d", msg[1], msg[2]);
         }
+	    break;
+    case 12:
+	    printf("Program   : %d", msg[1]);
+	    break;
+    case 13:
+	    printf("ChPress   : %d", msg[1]);
+	    break;
+    case 14:
+	    printf("PitchBend : %d", msg[1] + 128 * msg[2] - 8192);
+	    break;
+    case 15:
+	    if (ch == 0) {
+	        printf("SysEx     : %02x %02x %02x", msg[0], msg[1], msg[2]);
+	    } else if (ch == 1) {
+	        printf("MIDI TC   : %d", msg[1]);
+	    }else if (ch == 2) {
+	        printf("SongPos   : %d", msg[1] + 128 * msg[2]);
+	    } else if (ch == 3) {
+	        printf("SongSelect: %d", msg[1]);
+	    } else if (ch == 6) {
+	        printf("TuneReqest");
+	    } else if (ch == 8) {
+	        printf("TimingClock");
+	    } else if (ch == 10) {
+	        printf("START");
+	    } else if (ch == 11) {
+	        printf("CONTINUE");
+	    } else if (ch == 12) {
+	        printf("STOP");
+	    } else if (ch == 14) {
+	        printf("ActiveSensing");
+	    } else if (ch == 15) {
+	        printf("RESET");
+	    }
+	    break;
+    default:
+	    break;
     }
+    printf("\n");
+}
+
+void dump_message(const uint8_t msg[3], int n_data) {
+    int i;
+    static bool sysex = false;
+    
+    for(i = 0; i < n_data; i++) {
+	    printf("%02x", msg[i]);
+    }
+    for(; i < 3; i++) {
+	    printf("--");
+    }
+    printf(" | ");
+
+    if (sysex) {
+		printf("       |           : ");
+		for (int i = 0; i < 3; i++) {
+		    printf("%02x ", msg[i]);
+		    if (msg[i] == 0xf7) {
+			    sysex = false;
+			    break;
+		    }
+		}
+		printf("\n");
+	} else {
+		sysex = (msg[0] == 0xf0);
+		print_midi_event(msg);
+	}
+}
+
+void __time_critical_func(sendCMD)(uint8_t *buffer, int size) {
+    if ( Monitor_mode == 1 ){
+        dump_message(buffer, size);
+    }
+    for(int i = 0; i < size; i++) {
+	    uart_putc_raw(UART_ID, buffer[i]);
+    }
+}
+
+//--------------------------------------------------------------------+
+// M5UnitSynth
+//--------------------------------------------------------------------+
+
+void setInstrument(uint8_t bank, uint8_t channel, uint8_t value) {
+    uint8_t CMD_CONTROL_CHANGE_1[] = {
+        (uint8_t)(MIDI_CMD_CONTROL_CHANGE | (channel & 0x0f)), 0x00, bank};
+
+    sendCMD(CMD_CONTROL_CHANGE_1, sizeof(CMD_CONTROL_CHANGE_1));
+
+    uint8_t CMD_PROGRAM_CHANGE_2[] = {
+        (uint8_t)(MIDI_CMD_PROGRAM_CHANGE | (channel & 0x0f)), value};
+    sendCMD(CMD_PROGRAM_CHANGE_2, sizeof(CMD_PROGRAM_CHANGE_2));
+}
+
+void __time_critical_func(setNoteOn)(uint8_t channel, uint8_t pitch, uint8_t velocity) {
+    uint8_t CMD_NOTE_ON[] = {(uint8_t)(MIDI_CMD_NOTE_ON | (channel & 0x0f)),
+                             pitch, velocity};
+    sendCMD(CMD_NOTE_ON, sizeof(CMD_NOTE_ON));
+}
+
+void __time_critical_func(setNoteOff)(uint8_t channel, uint8_t pitch ) {
+    uint8_t CMD_NOTE_OFF[] = {(uint8_t)(MIDI_CMD_NOTE_OFF | (channel & 0x0f)),
+                              pitch, 0x00};
+    sendCMD(CMD_NOTE_OFF, sizeof(CMD_NOTE_OFF));
+}
+void __time_critical_func(setAllNotesOff)(uint8_t channel) {
+    uint8_t CMD_CONTROL_CHANGE[] = {
+        (uint8_t)(MIDI_CMD_CONTROL_CHANGE | (channel & 0x0f)), 0x7b, 0x00};
+    sendCMD(CMD_CONTROL_CHANGE, sizeof(CMD_CONTROL_CHANGE));
+}
+
+void __time_critical_func(setPitchBend)(uint8_t channel, int value) {
+    value = map(value, 0, 1023, 0, 0x3fff);
+    uint8_t CMD_PITCH_BEND[] = {
+        (uint8_t)(MIDI_CMD_PITCH_BEND | (channel & 0x0f)),
+        (uint8_t)(value & 0xef), (uint8_t)((value >> 7) & 0xff)};
+    sendCMD(CMD_PITCH_BEND, sizeof(CMD_PITCH_BEND));
+}
+void setPitchBendRange(uint8_t channel, uint8_t value) {
+    uint8_t CMD_CONTROL_CHANGE[] = {
+        (uint8_t)(MIDI_CMD_CONTROL_CHANGE | (channel & 0x0f)),
+        0x65,
+        0x00,
+        0x64,
+        0x00,
+        0x06,
+        (uint8_t)(value & 0x7f)};
+    sendCMD(CMD_CONTROL_CHANGE, sizeof(CMD_CONTROL_CHANGE));
+}
+
+void setMasterVolume(uint8_t level) {
+    uint8_t CMD_SYSTEM_EXCLUSIVE[] = {MIDI_CMD_SYSTEM_EXCLUSIVE,
+                                      0x7f,
+                                      0x7f,
+                                      0x04,
+                                      0x01,
+                                      0x00,
+                                      (uint8_t)(level & 0x7f),
+                                      MIDI_CMD_END_OF_SYSEX};
+    sendCMD(CMD_SYSTEM_EXCLUSIVE, sizeof(CMD_SYSTEM_EXCLUSIVE));
+}
+void setVolume(uint8_t channel, uint8_t level) {
+    uint8_t CMD_CONTROL_CHANGE[] = {
+        (uint8_t)(MIDI_CMD_CONTROL_CHANGE | (channel & 0x0f)), 0x07, level};
+    sendCMD(CMD_CONTROL_CHANGE, sizeof(CMD_CONTROL_CHANGE));
+}
+
+void setReverb(uint8_t channel, uint8_t program, uint8_t level,
+                            uint8_t delayfeedback) {
+    uint8_t CMD_CONTROL_CHANGE_1[] = {
+        (uint8_t)(MIDI_CMD_CONTROL_CHANGE | (channel & 0x0f)), 0x50,
+        (uint8_t)(program & 0x07)};
+    sendCMD(CMD_CONTROL_CHANGE_1, sizeof(CMD_CONTROL_CHANGE_1));
+    /* program:(Default:hall2(0x4))
+    room1:0x0
+    room2:0x1
+    room3:0x2
+    hall1:0x3
+    hall2:0x4
+    plate:0x5
+    delay:0x6
+    pan delay:0x7
     */
-    return 0; // never gets here
+
+    uint8_t CMD_CONTROL_CHANGE_2[] = {
+        (uint8_t)(MIDI_CMD_CONTROL_CHANGE | (channel & 0x0f)), 0x5b,
+        (uint8_t)(level & 0x7f)};
+    sendCMD(CMD_CONTROL_CHANGE_2, sizeof(CMD_CONTROL_CHANGE_2));
+
+    if (delayfeedback > 0) {
+        uint8_t CMD_SYSTEM_EXCLUSIVE[] = {MIDI_CMD_SYSTEM_EXCLUSIVE,
+                                          0x41,
+                                          0x00,
+                                          0x42,
+                                          0x12,
+                                          0x40,
+                                          0x01,
+                                          0x35,
+                                          (uint8_t)(delayfeedback & 0x7f),
+                                          0x00,
+                                          MIDI_CMD_END_OF_SYSEX};
+        sendCMD(CMD_SYSTEM_EXCLUSIVE, sizeof(CMD_SYSTEM_EXCLUSIVE));
+    }
+}
+
+void setChorus(uint8_t channel, uint8_t program, uint8_t level,
+                            uint8_t feedback, uint8_t chorusdelay) {
+    uint8_t CMD_CONTROL_CHANGE_1[] = {
+        (uint8_t)(MIDI_CMD_CONTROL_CHANGE | (channel & 0x0f)), 0x51,
+        (uint8_t)(program & 0x07)};
+    sendCMD(CMD_CONTROL_CHANGE_1, sizeof(CMD_CONTROL_CHANGE_1));
+
+    uint8_t CMD_CONTROL_CHANGE_2[] = {
+        (uint8_t)(MIDI_CMD_CONTROL_CHANGE | (channel & 0x0f)), 0x5d,
+        (uint8_t)(level & 0x7f)};
+    sendCMD(CMD_CONTROL_CHANGE_2, sizeof(CMD_CONTROL_CHANGE_2));
+
+    if (feedback > 0) {
+        uint8_t CMD_SYSTEM_EXCLUSIVE_1[] = {MIDI_CMD_SYSTEM_EXCLUSIVE,
+                                            0x41,
+                                            0x00,
+                                            0x42,
+                                            0x12,
+                                            0x40,
+                                            0x01,
+                                            0x3b,
+                                            (uint8_t)(feedback & 0x7f),
+                                            0x00,
+                                            MIDI_CMD_END_OF_SYSEX};
+        sendCMD(CMD_SYSTEM_EXCLUSIVE_1, sizeof(CMD_SYSTEM_EXCLUSIVE_1));
+    }
+
+    if (chorusdelay > 0) {
+        uint8_t CMD_SYSTEM_EXCLUSIVE_2[] = {MIDI_CMD_SYSTEM_EXCLUSIVE,
+                                            0x41,
+                                            0x00,
+                                            0x42,
+                                            0x12,
+                                            0x40,
+                                            0x01,
+                                            0x3c,
+                                            (uint8_t)(feedback & 0x7f),
+                                            0x00,
+                                            MIDI_CMD_END_OF_SYSEX
+
+        };
+        sendCMD(CMD_SYSTEM_EXCLUSIVE_2, sizeof(CMD_SYSTEM_EXCLUSIVE_2));
+    }
+}
+
+void setPan(uint8_t channel, uint8_t value) {
+    uint8_t CMD_CONTROL_CHANGE[] = {
+        (uint8_t)(MIDI_CMD_CONTROL_CHANGE | (channel & 0x0f)), 0x0A, value};
+    sendCMD(CMD_CONTROL_CHANGE, sizeof(CMD_CONTROL_CHANGE));
+}
+
+void setEqualizer(uint8_t channel, uint8_t lowband,
+                               uint8_t medlowband, uint8_t medhighband,
+                               uint8_t highband, uint8_t lowfreq,
+                               uint8_t medlowfreq, uint8_t medhighfreq,
+                               uint8_t highfreq) {
+    uint8_t CMD_CONTROL_CHANGE[] = {
+        (uint8_t)(MIDI_CMD_CONTROL_CHANGE | (channel & 0x0f)),
+        0x63,
+        0x37,
+        0x62,
+        0x00,
+        0x06,
+        (uint8_t)(lowband & 0x7f)};
+    sendCMD(CMD_CONTROL_CHANGE, sizeof(CMD_CONTROL_CHANGE));
+
+    CMD_CONTROL_CHANGE[4] = 0x01;
+    CMD_CONTROL_CHANGE[6] = (medlowband & 0x7f);
+
+    sendCMD(CMD_CONTROL_CHANGE, sizeof(CMD_CONTROL_CHANGE));
+
+    CMD_CONTROL_CHANGE[4] = 0x02;
+    CMD_CONTROL_CHANGE[6] = (medhighband & 0x7f);
+    sendCMD(CMD_CONTROL_CHANGE, sizeof(CMD_CONTROL_CHANGE));
+
+    CMD_CONTROL_CHANGE[4] = 0x03;
+    CMD_CONTROL_CHANGE[6] = (highband & 0x7f);
+    sendCMD(CMD_CONTROL_CHANGE, sizeof(CMD_CONTROL_CHANGE));
+
+    CMD_CONTROL_CHANGE[4] = 0x08;
+    CMD_CONTROL_CHANGE[6] = (lowfreq & 0x7f);
+    sendCMD(CMD_CONTROL_CHANGE, sizeof(CMD_CONTROL_CHANGE));
+
+    CMD_CONTROL_CHANGE[4] = 0x09;
+    CMD_CONTROL_CHANGE[6] = (medlowfreq & 0x7f);
+    sendCMD(CMD_CONTROL_CHANGE, sizeof(CMD_CONTROL_CHANGE));
+
+    CMD_CONTROL_CHANGE[4] = 0x0A;
+    CMD_CONTROL_CHANGE[6] = (medhighfreq & 0x7f);
+    sendCMD(CMD_CONTROL_CHANGE, sizeof(CMD_CONTROL_CHANGE));
+
+    CMD_CONTROL_CHANGE[4] = 0x0B;
+    CMD_CONTROL_CHANGE[6] = (highfreq & 0x7f);
+    sendCMD(CMD_CONTROL_CHANGE, sizeof(CMD_CONTROL_CHANGE));
+}
+
+void setTuning(uint8_t channel, uint8_t fine, uint8_t coarse) {
+    uint8_t CMD_CONTROL_CHANGE[] = {
+        (uint8_t)(MIDI_CMD_CONTROL_CHANGE | (channel & 0x0f)),
+        0x65,
+        0x00,
+        0x64,
+        0x01,
+        0x06,
+        (uint8_t)(fine & 0x7f)};
+
+    sendCMD(CMD_CONTROL_CHANGE, sizeof(CMD_CONTROL_CHANGE));
+
+    CMD_CONTROL_CHANGE[4] = 0x02;
+    CMD_CONTROL_CHANGE[6] = (coarse & 0x7f);
+
+    sendCMD(CMD_CONTROL_CHANGE, sizeof(CMD_CONTROL_CHANGE));
+}
+void setVibrate(uint8_t channel, uint8_t rate, uint8_t depth,
+                             uint8_t delay) {
+    uint8_t CMD_CONTROL_CHANGE[] = {
+        (uint8_t)(MIDI_CMD_CONTROL_CHANGE | (channel & 0x0f)),
+        0x63,
+        0x01,
+        0x62,
+        0x08,
+        0x06,
+        (uint8_t)(rate & 0x7f)};
+    sendCMD(CMD_CONTROL_CHANGE, sizeof(CMD_CONTROL_CHANGE));
+
+    CMD_CONTROL_CHANGE[4] = 0x09;
+    CMD_CONTROL_CHANGE[6] = (depth & 0x7f);
+    sendCMD(CMD_CONTROL_CHANGE, sizeof(CMD_CONTROL_CHANGE));
+
+    CMD_CONTROL_CHANGE[4] = 0x0A;
+    CMD_CONTROL_CHANGE[6] = (delay & 0x7f);
+    sendCMD(CMD_CONTROL_CHANGE, sizeof(CMD_CONTROL_CHANGE));
+}
+
+void setTvf(uint8_t channel, uint8_t cutoff, uint8_t resonance) {
+    uint8_t CMD_CONTROL_CHANGE[] = {
+        (uint8_t)(MIDI_CMD_CONTROL_CHANGE | (channel & 0x0f)),
+        0x63,
+        0x01,
+        0x62,
+        0x20,
+        0x06,
+        (uint8_t)(cutoff & 0x7f)};
+    sendCMD(CMD_CONTROL_CHANGE, sizeof(CMD_CONTROL_CHANGE));
+
+    CMD_CONTROL_CHANGE[4] = 0x21;
+    CMD_CONTROL_CHANGE[6] = (resonance & 0x7f);
+    sendCMD(CMD_CONTROL_CHANGE, sizeof(CMD_CONTROL_CHANGE));
+}
+void setEnvelope(uint8_t channel, uint8_t attack, uint8_t decay,
+                              uint8_t release) {
+    uint8_t CMD_CONTROL_CHANGE[] = {
+
+        (uint8_t)(MIDI_CMD_CONTROL_CHANGE | (channel & 0x0f)),
+        0x63,
+        0x01,
+        0x62,
+        0x63,
+        0x06,
+        (uint8_t)(attack & 0x7f)};
+    sendCMD(CMD_CONTROL_CHANGE, sizeof(CMD_CONTROL_CHANGE));
+
+    CMD_CONTROL_CHANGE[4] = 0x64;
+    CMD_CONTROL_CHANGE[6] = (decay & 0x7f);
+    sendCMD(CMD_CONTROL_CHANGE, sizeof(CMD_CONTROL_CHANGE));
+
+    CMD_CONTROL_CHANGE[4] = 0x66;
+    CMD_CONTROL_CHANGE[6] = (release & 0x7f);
+    sendCMD(CMD_CONTROL_CHANGE, sizeof(CMD_CONTROL_CHANGE));
+}
+
+void setModWheel(uint8_t channel, uint8_t pitch, uint8_t tvtcutoff,
+                              uint8_t amplitude, uint8_t rate,
+                              uint8_t pitchdepth, uint8_t tvfdepth,
+                              uint8_t tvadepth) {
+    uint8_t CMD_CONTROL_CHANGE[] = {MIDI_CMD_CONTROL_CHANGE,
+                                    0x41,
+                                    0x00,
+                                    0x42,
+                                    0x12,
+                                    0x40,
+                                    (uint8_t)(0x20 | (channel & 0x0f)),
+                                    0x00,
+                                    pitch,
+                                    0x00,
+                                    MIDI_CMD_END_OF_SYSEX};
+    sendCMD(CMD_CONTROL_CHANGE, sizeof(CMD_CONTROL_CHANGE));
+
+    CMD_CONTROL_CHANGE[8] = 0x01;
+    CMD_CONTROL_CHANGE[9] = tvtcutoff;
+    sendCMD(CMD_CONTROL_CHANGE, sizeof(CMD_CONTROL_CHANGE));
+
+    CMD_CONTROL_CHANGE[8] = 0x02;
+    CMD_CONTROL_CHANGE[9] = amplitude;
+    sendCMD(CMD_CONTROL_CHANGE, sizeof(CMD_CONTROL_CHANGE));
+
+    CMD_CONTROL_CHANGE[8] = 0x03;
+    CMD_CONTROL_CHANGE[9] = rate;
+    sendCMD(CMD_CONTROL_CHANGE, sizeof(CMD_CONTROL_CHANGE));
+
+    CMD_CONTROL_CHANGE[8] = 0x04;
+    CMD_CONTROL_CHANGE[9] = pitchdepth;
+    sendCMD(CMD_CONTROL_CHANGE, sizeof(CMD_CONTROL_CHANGE));
+
+    CMD_CONTROL_CHANGE[8] = 0x05;
+    CMD_CONTROL_CHANGE[9] = tvfdepth;
+    sendCMD(CMD_CONTROL_CHANGE, sizeof(CMD_CONTROL_CHANGE));
+
+    CMD_CONTROL_CHANGE[8] = 0x06;
+    CMD_CONTROL_CHANGE[9] = tvadepth;
+    sendCMD(CMD_CONTROL_CHANGE, sizeof(CMD_CONTROL_CHANGE));
+}
+
+void setAllInstrumentDrums() {
+    uint8_t CMD_CONTROL_CHANGE[] = {MIDI_CMD_CONTROL_CHANGE,
+                                    0x41,
+                                    0x00,
+                                    0x42,
+                                    0x12,
+                                    0x40,
+                                    0x10,
+                                    0x15,
+                                    0x01,
+                                    0x00,
+                                    MIDI_CMD_END_OF_SYSEX};
+    sendCMD(CMD_CONTROL_CHANGE, sizeof(CMD_CONTROL_CHANGE));
+
+    for (uint8_t i = 1; i < 15; i++) {
+        CMD_CONTROL_CHANGE[6] = i;
+        sendCMD(CMD_CONTROL_CHANGE, sizeof(CMD_CONTROL_CHANGE));
+    }
+}
+
+void reset() {
+    uint8_t CMD_SYSTEM_RESET[] = {MIDI_CMD_SYSTEM_RESET};
+    sendCMD(CMD_SYSTEM_RESET, sizeof(CMD_SYSTEM_RESET));
 }
 
 
@@ -491,7 +535,7 @@ int main()
 // Invoked when device with USB MIDI interface is mounted
 void tuh_midi_mount_cb(uint8_t dev_addr, uint8_t in_ep, uint8_t out_ep, uint8_t num_cables_rx, uint16_t num_cables_tx)
 {
-  printf("ble-midi2usbhost: MIDI device address = %u, IN endpoint %u has %u cables, OUT endpoint %u has %u cables\r\n",
+  printf("midiserial2usbhost: MIDI device address = %u, IN endpoint %u has %u cables, OUT endpoint %u has %u cables\r\n",
       dev_addr, in_ep & 0xf, num_cables_rx, out_ep & 0xf, num_cables_tx);
 
   if (midi_dev_addr == 0) {
@@ -499,7 +543,7 @@ void tuh_midi_mount_cb(uint8_t dev_addr, uint8_t in_ep, uint8_t out_ep, uint8_t 
     midi_dev_addr = dev_addr;
   }
   else {
-    printf("ble-midi2usbhost: A different USB MIDI Device is already connected.\r\nOnly one device at a time is supported in this program\r\nDevice is disabled\r\n");
+    printf("midiserial2usbhost: A different USB MIDI Device is already connected.\r\nOnly one device at a time is supported in this program\r\nDevice is disabled\r\n");
   }
 }
 
@@ -508,10 +552,10 @@ void tuh_midi_umount_cb(uint8_t dev_addr, uint8_t instance)
 {
   if (dev_addr == midi_dev_addr) {
     midi_dev_addr = 0;
-    printf("ble-midi2usbhost: MIDI device address = %d, instance = %d is unmounted\r\n", dev_addr, instance);
+    printf("midiserial2usbhost: MIDI device address = %d, instance = %d is unmounted\r\n", dev_addr, instance);
   }
   else {
-    printf("ble-midi2usbhost: Unused MIDI device address = %d, instance = %d is unmounted\r\n", dev_addr, instance);
+    printf("midiserial2usbhost: Unused MIDI device address = %d, instance = %d is unmounted\r\n", dev_addr, instance);
   }
 }
 
@@ -523,24 +567,69 @@ void __time_critical_func(tuh_midi_rx_cb)(uint8_t dev_addr, uint32_t num_packets
         {
             uint8_t cable_num;
             uint8_t buffer[48];
+            uint8_t send_buf[3];
+            //uint8_t buffer[6];
             while (1) {
                 uint32_t bytes_read = tuh_midi_stream_read(dev_addr, &cable_num, buffer, sizeof(buffer));
+                //uint32_t bytes_read = tuh_midi_stream_read(dev_addr, &cable_num, buffer, 3);
                 if (bytes_read == 0)
                     return; // done
+
                 if (cable_num == 0) {
-                    if (con_handle == HCI_CON_HANDLE_INVALID) {
-                        //TU_LOG1("ble-midi2usbhost: No BLE-MIDI connection: Dropped %lu bytes sending to BLE-MIDI\r\n", bytes_read);
-                        TU_LOG1("Dropped %lu\r\n", bytes_read);
-                        return;
+                    if ( Monitor_mode == 1 ){
+                        for(uint32_t i = 0; i < bytes_read; i++) {
+	                        printf("%02x", buffer[i]);
+                        }
+                        printf(" | \n");
                     }
-                    uint8_t npushed = midi_service_stream_write(con_handle, bytes_read, buffer);
-                    if (npushed != bytes_read) {
-                        //TU_LOG1("ble-midi2usbhost: Warning: Dropped %lu bytes sending to BLE-MIDI\r\n", bytes_read - npushed);
-                        TU_LOG1("Warning Dropped %lu\r\n", bytes_read - npushed);
+
+                    if ( Ble_mode == 0 ){
+                        if ( EWI == 1 ) {
+                            for (uint32_t i=0; i < bytes_read; i += 3 ){
+                                send_buf[0] = buffer[i];
+                                send_buf[1] = buffer[i+1];
+                                send_buf[2] = buffer[i+2];
+                                ch = send_buf[0] & 0x0f;
+
+                                if ( (send_buf[0] & 0xf0) == 0x90 ) { // NoteON
+                                    setAllNotesOff(ch);
+                                    if ( Monitor_mode == 1 ){
+                                        printf("AutoNotesOff");
+                                        printf("\n");
+                                    }
+                                    sleep_us(200);
+                                    send_buf[2] = 127;
+                                    sendCMD(send_buf, 3);
+                                    continue;
+
+                                } else if ( (send_buf[0] & 0xf0) == 0xB0 && (send_buf[1] & 0x0f) == 0x02 ) { //Breath Control
+	                                send_buf[1] = 0x07;
+                                    if (send_buf[2] <= 3 ){
+                                        setAllNotesOff(ch);
+                                    } else {
+                                        send_buf[2] = (send_buf[2] * 1.2) < 128 ? (send_buf[2] * 1.2) : 127;
+                                    }
+                                    sendCMD(send_buf, 3);
+                                    break;
+
+                                } else {
+                                    sendCMD(send_buf, 3);
+                                }
+                            }
+
+                        } else  {
+                            sendCMD(buffer, bytes_read);
+                        }
+
+                    } else {
+                        //uint8_t npushed = midi_service_stream_write(con_handle, bytes_read, buffer);
+                        sendCMD(buffer, bytes_read);
                     }
+                    
                 }
             }
         }
+        
     }
 }
 
@@ -549,4 +638,343 @@ void __time_critical_func(tuh_midi_tx_cb)(uint8_t dev_addr)
     (void)dev_addr;
 }
 
+
+void synth_init(int inst_list_num){
+    // Set up UART1
+    uart_init(UART_ID, BAUD_RATE);
+    gpio_set_function(UART_TX_PIN, GPIO_FUNC_UART);
+    gpio_set_function(UART_RX_PIN, GPIO_FUNC_UART);
+    uart_set_hw_flow(UART_ID, false, false);
+    uart_set_format(UART_ID, DATA_BITS, STOP_BITS, PARITY);
+    //uart_set_fifo_enabled(UART_ID, true);
+
+    //Set up M5UnitSynth
+    //setMasterVolume(127);
+    setVolume(0, 127);
+    setInstrument(0, 0, inst_list_num+1 );
+}
+
+void __time_critical_func(core1_entry)() {
+
+    DEV_Delay_ms(100);
+    
+    //if(DEV_Module_Init()!=0){
+    //    return -1;
+    //}
+    DEV_Module_Init();
+
+    DEV_SET_PWM(ON_Brightness);
+
+    //LCD Init
+    LCD_1IN3_Init(HORIZONTAL);
+    LCD_1IN3_Clear(WHITE);
+    
+    //LCD_SetBacklight(1023);
+    UDOUBLE Imagesize = LCD_1IN3_HEIGHT*LCD_1IN3_WIDTH*2;
+    UWORD *BlackImage;
+    if((BlackImage = (UWORD *)malloc(Imagesize)) == NULL) {
+        printf("Failed to apply for black memory...\r\n");
+        exit(0);
+    }
+
+    //DEV_SET_PWM(ON_Brightness);
+    // 1.Create a new image cache named IMAGE_RGB and fill it with white
+    Paint_NewImage((UBYTE *)BlackImage,LCD_1IN3.WIDTH,LCD_1IN3.HEIGHT, 0, WHITE);
+    Paint_SetScale(65);
+    Paint_Clear(WHITE);
+    Paint_SetRotate(ROTATE_0);
+    Paint_Clear(WHITE);
+
+    Paint_ClearWindows(1, 10, X_MAX, 30, BLACK);
+    Paint_ClearWindows(1, 40, X_MAX, 60, BLACK);
+    Paint_ClearWindows(1, 70, X_MAX, 90, BLACK);
+    Paint_ClearWindows(1, 100, X_MAX, 120, BLACK);
+    Paint_ClearWindows(1, 130, X_MAX, 150, BLACK);
+
+    Paint_DrawString_EN(1, 10, "Play Mode", &Font20, WHITE,  BLACK);
+    Paint_DrawString_EN(1, 40, inst_list[inst_list_num], &Font20, WHITE,  BLACK);
+    Paint_DrawString_EN(1, 70, "Monitor OFF", &Font20, WHITE,  BLACK);
+    Paint_DrawString_EN(1, 100, "Normal Mode", &Font20, WHITE,  BLACK);
+    Paint_DrawString_EN(1, 130, Control_lists[cont_list_num], &Font20, YELLOW,  BLACK);
+    Paint_DrawNum(180, 130, Set_level, &Font20, 0, YELLOW,  BLACK);
+    Paint_DrawString_EN(1, 160, "Serial Mode", &Font20, YELLOW,  BLACK);
+    
+    // 3.Refresh the picture in RAM to LCD
+    LCD_1IN3_Display(BlackImage);
+    DEV_Delay_ms(2000);
+    DEV_SET_PWM(OFF_Brightness);
+    
+    uint8_t keyA = 15; 
+    uint8_t keyB = 17; 
+    uint8_t keyX = 19; 
+    uint8_t keyY = 21;
+
+    uint8_t up = 2;
+	uint8_t dowm = 18;
+	uint8_t left = 16;
+	uint8_t right = 20;
+	uint8_t ctrl = 3;
+   
+    SET_Infrared_PIN(keyA);    
+    SET_Infrared_PIN(keyB);
+    SET_Infrared_PIN(keyX);
+    SET_Infrared_PIN(keyY);
+		 
+	SET_Infrared_PIN(up);
+    SET_Infrared_PIN(dowm);
+    SET_Infrared_PIN(left);
+    SET_Infrared_PIN(right);
+    SET_Infrared_PIN(ctrl);
+
+    while(1){
+     
+        if(Digital_Read(keyA ) == 0){
+ 
+            mode_num++;
+            if (mode_num >=3 ){
+                mode_num = 0;
+            }
+
+            Paint_ClearWindows(1, 10, X_MAX, 30, BLACK);
+            if( mode_num == 1){
+                Control_mode = 1;
+                Parameter_mode = 0;
+                DEV_SET_PWM(ON_Brightness);
+                Paint_DrawString_EN(1, 10, "Setting Mode", &Font20, YELLOW,  BLACK);
+            } else if ( mode_num == 2){
+                Control_mode = 0;
+                Parameter_mode = 1;
+                DEV_SET_PWM(ON_Brightness);
+                Paint_DrawString_EN(1, 10, "Parameter Mode", &Font20, YELLOW,  BLACK);
+            
+            } else {
+                Control_mode = 0;
+                Parameter_mode = 0;
+                Paint_DrawString_EN(1, 10, "Play Mode", &Font20, WHITE,  BLACK);
+                LCD_1IN3_DisplayWindows(1, 10, X_MAX, 30,BlackImage);
+                sleep_ms(2000);
+                DEV_SET_PWM(OFF_Brightness);
+            }
+            LCD_1IN3_DisplayWindows(1, 10, X_MAX, 30,BlackImage);
+            sleep_ms(1000);
+
+        }
+        else{
+
+        }
+        
+        if( mode_num != 0 ){
+            if(Digital_Read(keyB ) == 0){
+                Paint_ClearWindows(1, 70, X_MAX, 90, BLACK);
+                if( Monitor_mode == 0){
+                    Monitor_mode = 1;
+                    Paint_DrawString_EN(1, 70, "Monitor ON", &Font20, YELLOW,  BLACK);
+                } else {
+                    Monitor_mode = 0;
+                    Paint_DrawString_EN(1, 70, "Monitor OFF", &Font20, WHITE,  BLACK);
+                }
+                LCD_1IN3_DisplayWindows(1, 70, X_MAX, 90,BlackImage);
+            } else {
+
+            }
+        
+            if(Digital_Read(keyX ) == 0){
+                Paint_ClearWindows(1, 100, X_MAX, 120, BLACK);
+                if( EWI == 0){
+                    EWI = 1;
+                    Paint_DrawString_EN(1, 100, "EWI Mode", &Font20, YELLOW,  BLACK);
+                } else {
+                    EWI = 0;
+                    Paint_DrawString_EN(1, 100, "Normal Mode", &Font20, WHITE,  BLACK);
+                }
+                LCD_1IN3_DisplayWindows(1, 100, X_MAX, 120,BlackImage);
+
+            } else{ 
+
+            }
+            
+            if(Digital_Read(keyY ) == 0){
+                Paint_ClearWindows(1, 160, X_MAX, 180, BLACK);
+                if( Ble_mode == 0){
+                    //Ble_mode = 1;
+                    //Paint_DrawString_EN(1, 160, "Bluetooth Mode", &Font20, YELLOW,  BLACK);
+                    Ble_mode = 0;
+                    Paint_DrawString_EN(1, 160, "Serial Mode", &Font20, YELLOW,  BLACK);
+                } else {
+                    Ble_mode = 0;
+                    Paint_DrawString_EN(1, 160, "Serial Mode", &Font20, YELLOW,  BLACK);
+                }
+                LCD_1IN3_DisplayWindows(1, 160, X_MAX, 180,BlackImage);
+            } else {
+
+            }
+
+
+            if(Digital_Read(up ) == 0){
+                
+                if ( Parameter_mode == 1){
+                    Paint_ClearWindows(180, 130, X_MAX, 150, BLACK);
+                    Set_level++;
+                    if (Set_level >=128 ){
+                        Set_level = 127;
+                    }
+                    Paint_DrawNum(180, 130, Set_level, &Font20, 0, YELLOW,  BLACK);
+                    LCD_1IN3_DisplayWindows(180, 130, X_MAX, 150,BlackImage);
+
+                } else {
+                    Paint_ClearWindows(1, 40, X_MAX, 60, BLACK);
+                    inst_list_num++;
+                    if (inst_list_num >=128 ){
+                        inst_list_num = 0;
+                    }
+                    Paint_DrawString_EN(1, 40, inst_list[inst_list_num], &Font20, YELLOW,  BLACK);
+                    LCD_1IN3_DisplayWindows(1, 40, X_MAX, 60,BlackImage);
+
+                }
+            } else {
+
+            }
+
+            if(Digital_Read(dowm ) == 0){
+
+                if ( Parameter_mode == 1){
+                    Paint_ClearWindows(180, 130, X_MAX, 150, BLACK);
+                    Set_level--;
+                    if (Set_level <= 0 ){
+                        Set_level = 0;
+                    }
+                    Paint_DrawNum(180, 130, Set_level, &Font20, 0, YELLOW,  BLACK);
+                    LCD_1IN3_DisplayWindows(180, 130, X_MAX, 150,BlackImage);
+
+                } else {
+                    Paint_ClearWindows(1, 40, X_MAX, 60, BLACK);
+                    inst_list_num--;
+                    if (inst_list_num < 0 ){
+                        inst_list_num = 127;
+                    }
+                    Paint_DrawString_EN(1, 40, inst_list[inst_list_num], &Font20, YELLOW,  BLACK);
+                    LCD_1IN3_DisplayWindows(1, 40, X_MAX, 60,BlackImage);
+                }
+            } else {
+
+            }
+        
+            if( (Digital_Read(left ) == 0) && (Parameter_mode == 1) ){
+                Paint_ClearWindows(1, 130, 200, 150, BLACK);
+
+                cont_list_num++;
+                if (cont_list_num >=5 ){
+                    cont_list_num = 0;
+                }
+                Paint_DrawString_EN(1, 130, Control_lists[cont_list_num], &Font20, YELLOW,  BLACK);
+                LCD_1IN3_DisplayWindows(1, 130, 200, 150,BlackImage);           
+            } else {
+
+            }
+            
+            if( (Digital_Read(right ) == 0) && (Parameter_mode == 1) ){
+                Paint_ClearWindows(1, 130, X_MAX, 150, BLACK);
+
+                cont_list_num--;
+                if (cont_list_num < 0 ){
+                    cont_list_num = 4;
+                }
+                Paint_DrawString_EN(1, 130, Control_lists[cont_list_num], &Font20, YELLOW,  BLACK);
+                LCD_1IN3_DisplayWindows(1, 130, X_MAX, 150,BlackImage);
+            } else {
+
+            }
+        
+            if(Digital_Read(ctrl ) == 0){
+                if ( Parameter_mode == 1){
+                    Paint_ClearWindows(1, 130, X_MAX, 150, BLACK);
+                    Paint_DrawString_EN(1, 130, Control_lists[cont_list_num], &Font20, WHITE,  BLACK);
+                    Paint_DrawNum(180, 130, Set_level, &Font20, 0, WHITE,  BLACK);
+                    LCD_1IN3_DisplayWindows(1, 130, X_MAX, 150,BlackImage);  
+                    switch (cont_list_num) {
+                        case 0:
+	                        setVolume(ch, Set_level);
+	                        break;
+                        case 1:
+	                        setMasterVolume(Set_level);
+	                        break;
+                        default:
+	                        break;
+                    }
+
+                } else {
+                    Paint_ClearWindows(1, 40, X_MAX, 60, BLACK);
+                    setInstrument(0, 0, inst_list_num+1);
+                    Paint_DrawString_EN(1, 40, inst_list[inst_list_num], &Font20, WHITE,  BLACK);
+                    LCD_1IN3_DisplayWindows(1, 40, X_MAX, 60,BlackImage);
+                }
+            } else {
+
+            }
+        
+        } else {
+            if( Digital_Read(keyY) == 0 ){
+                setAllNotesOff(ch);
+            }
+        }
+
+    }
+
+    //Module Exit
+    free(BlackImage);
+    BlackImage = NULL;
+    DEV_Module_Exit();
+    //return 0;
+
+}
+
+void __time_critical_func(core0_loop)() {
+    
+    tusb_init();
+
+    while(1) {
+        
+        tuh_task();
+        bool usb_connected = midi_dev_addr != 0 && tuh_midi_configured(midi_dev_addr);
+
+        if (usb_connected){
+            tuh_midi_stream_flush(midi_dev_addr);
+        } 
+        
+    }
+
+}
+
+
+
+int main()
+{
+    //uint8_t buffer[3];
+
+    board_init();
+    printf("Pico USB-MIDI to Serial Adapter\r\n");
+
+    // Core電圧Up 1.1V->1.3V
+    //vreg_set_voltage(VREG_VOLTAGE_1_30);
+	// 最適なCPU周波数の設定(オーバクロック CLK_SYS=208800000[Hz])
+    //set_sys_clock_khz(CLK_SYS/1000, true);
+
+    multicore_reset_core1();
+
+    stdio_init_all();
+
+    // UARTデバッグ高速化
+    // printf出力が多いとDAC再生が途切れる場合があるため
+    //uart_init(uart0, 3000000);
+	printf(">>>\nCLK_SYS=%ldHz\r\n", clock_get_hz(clk_sys));
+
+    sleep_ms(1000); 
+
+    synth_init(50);
+
+    multicore_launch_core1(core1_entry);
+    core0_loop();
+
+    return 0; // never gets here
+}
 

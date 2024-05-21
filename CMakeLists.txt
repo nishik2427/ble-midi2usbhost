@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.13)
-set(target_name ble-midi2usbhost)
-set(PICO_BOARD pico_w)
+set(target_name midiserial2usb)
+set(PICO_BOARD "pico")
 include (pico_sdk_import.cmake)
 project(${target_name})
 set(CMAKE_C_STANDARD 11)
@@ -43,6 +43,14 @@ endfunction()
 add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/lib/ring_buffer_lib)
 add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/lib/pico-w-ble-midi-lib)
 add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/lib/usb_midi_host)
+add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/lib/Config)
+add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/lib/Fonts)
+add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/lib/GUI)
+#add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/lib/Icm20948)
+add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/lib/Infrared)
+add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/lib/LCD)
+add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/lib/OLED)
+
 
 add_executable(${target_name}
     ble-midi2usbhost.c
@@ -50,13 +58,20 @@ add_executable(${target_name}
 target_link_libraries(${target_name}
     pico_stdlib
     ble_midi_service_lib
-    pico_btstack_cyw43
-    pico_cyw43_arch_none
+    #pico_btstack_cyw43
+    #pico_cyw43_arch_none
     ring_buffer_lib
     tinyusb_host
     tinyusb_board
     usb_midi_host_app_driver
     pico_multicore
+    Config
+    Fonts
+    GUI
+    Infrared
+    LCD
+    #lcm20948
+    OLED
     )
 target_include_directories(${target_name} PRIVATE
     ${CMAKE_CURRENT_LIST_DIR} # For btstack config, etc.
@@ -65,6 +80,9 @@ pico_enable_stdio_uart(${target_name} 1)
 target_link_options(${target_name} PRIVATE -Xlinker --print-memory-usage)
 target_compile_options(${target_name} PRIVATE -Wall -Wextra)
 my_pico_btstack_make_gatt_header(${target_name} PRIVATE "${CMAKE_CURRENT_LIST_DIR}/ble-midi2usbhost.gatt" "-I${CMAKE_CURRENT_LIST_DIR}/lib/pico-w-ble-midi-lib")
+
+pico_enable_stdio_usb(${target_name} 0)
+pico_enable_stdio_uart(${target_name} 1)
 
 pico_add_extra_outputs(${target_name})
 
